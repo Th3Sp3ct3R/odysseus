@@ -26,7 +26,8 @@ class MemoryIndexProvider(Protocol):
     @property
     def healthy(self) -> bool: ...
 
-    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None) -> None: ...
+    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None,
+            bulk: bool = False, **meta) -> None: ...
 
     def remove(self, memory_id: str) -> None: ...
 
@@ -67,13 +68,15 @@ class FallbackProvider:
     def _primary_up(self) -> bool:
         return bool(getattr(self._primary, "healthy", False))
 
-    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None) -> None:
+    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None,
+            bulk: bool = False, **meta) -> None:
         if self._primary_up():
             try:
-                self._primary.add(memory_id, text, owner=owner)
+                self._primary.add(memory_id, text, owner=owner, bulk=bulk, **meta)
             except Exception:
                 logger.debug("primary provider add failed; continuing", exc_info=True)
-        self._fallback.add(memory_id, text, owner=owner)
+        # Fallback (local) is authoritative for the index; it ignores bulk/meta.
+        self._fallback.add(memory_id, text, owner=owner, bulk=bulk, **meta)
 
     def remove(self, memory_id: str) -> None:
         if self._primary_up():
