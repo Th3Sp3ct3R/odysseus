@@ -1,0 +1,4 @@
+# Never commit creds, dedup state, or generated artifacts.
+config.yaml
+.sync_state.json
+out/

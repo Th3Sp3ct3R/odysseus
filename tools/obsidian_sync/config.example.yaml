@@ -1,0 +1,31 @@
+# Obsidian -> Odysseus memory sync config.
+# Copy to config.yaml (gitignored) and edit. Env vars override these.
+
+# --- Odysseus target (loopback only — do not expose publicly) ---
+odysseus_url: "http://localhost:7001"
+username: "growthgod"
+owner: "growthgod"
+# Leave password blank here and export ODYSSEUS_PASSWORD instead (preferred),
+# or set it here if this file stays gitignored on a single-user machine.
+password: ""
+
+# --- What to import as durable Core Memory (ALLOW-LIST only) ---
+# Point ONLY at curated folders. NEVER the whole vault.
+memory_source_dirs:
+  - "/path/to/your/vault/Memory"
+  - "/path/to/your/vault/Memory/people"
+
+# --- Full-vault semantic search (Documents/RAG) — manifest ONLY ---
+# These are listed for a separate Documents ingestion. They are NEVER
+# written into Core Memory by this script.
+rag_source_dirs:
+  - "/path/to/your/vault/Projects"
+  - "/path/to/your/vault/Architecture"
+
+# --- Limits / safety ---
+max_memory_entries_per_run: 200
+dry_run: true            # ALWAYS dry-run unless you pass --commit
+include_dated: false     # skip YYYY-MM-DD.md daily notes (ephemeral)
+source_prefix: "obsidian"
+min_len: 8               # reject candidate facts shorter than this (normalized)
+max_len: 400             # reject prose blobs longer than this
