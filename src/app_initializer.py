@@ -55,9 +55,12 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize memory vector store (share embedding model with RAG if available)
     memory_vector = None
     try:
-        from src.memory_vector import MemoryVectorStore
+        from src.memory_providers import build_memory_index
         embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
-        memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
+        # Provider seam: local by default (wraps MemoryVectorStore); selectable
+        # via VANTA_BRAIN_* env (see docs/design/vanta-brain-adapter.md). The
+        # returned object satisfies the same surface used below + downstream.
+        memory_vector = build_memory_index(DATA_DIR, embedding_model=embedding_model)
         if memory_vector.healthy:
             # Rebuild index from existing memories if empty
             if memory_vector.count() == 0:
