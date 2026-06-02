@@ -23,9 +23,11 @@ class LocalMemoryProvider:
     def healthy(self) -> bool:
         return bool(getattr(self._store, "healthy", False))
 
-    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None) -> None:
-        # The underlying store has no owner concept (owner scoping happens via
-        # MemoryManager id-filtering upstream); accept and ignore for parity.
+    def add(self, memory_id: str, text: str, *, owner: Optional[str] = None,
+            bulk: bool = False, **meta) -> None:
+        # The underlying store has no owner/bulk/metadata concept (owner scoping
+        # happens via MemoryManager id-filtering upstream); accept and ignore for
+        # signature parity with VantaBrainProvider.
         return self._store.add(memory_id, text)
 
     def remove(self, memory_id: str) -> None:

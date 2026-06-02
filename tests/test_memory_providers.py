@@ -118,14 +118,17 @@ def test_factory_default_returns_local(monkeypatch, tmp_path):
     assert prov.healthy is True
 
 
-def test_factory_enabled_without_vanta_falls_back_to_local(monkeypatch, tmp_path, caplog):
+def test_factory_enabled_without_config_falls_back_to_local(monkeypatch, tmp_path, caplog):
+    # Enabled but no BASE_URL/API_KEY -> warn + local (P2 behavior).
     monkeypatch.setenv("VANTA_BRAIN_ENABLED", "true")
     monkeypatch.setenv("VANTA_BRAIN_PROVIDER", "vanta")
+    monkeypatch.delenv("VANTA_BRAIN_BASE_URL", raising=False)
+    monkeypatch.delenv("VANTA_BRAIN_API_KEY", raising=False)
     _patch_store(monkeypatch, FakeStore())
     with caplog.at_level("WARNING"):
         prov = factory.build_memory_index(str(tmp_path))
     assert isinstance(prov, LocalMemoryProvider)
-    assert any("not implemented yet" in r.message for r in caplog.records)
+    assert any("missing" in r.message.lower() for r in caplog.records)
 
 
 # --------------------------------------------------------------------------- #

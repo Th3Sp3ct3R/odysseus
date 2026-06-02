@@ -40,7 +40,7 @@ from services.memory import MemoryManager
 from routes.memory_routes import setup_memory_routes
 
 
-def _make_client(tmp_path):
+def _make_client(tmp_path, memory_vector=None):
     """A minimal app with just the memory router and a fixed current_user."""
     app = FastAPI()
 
@@ -51,8 +51,19 @@ def _make_client(tmp_path):
 
     mm = MemoryManager(str(tmp_path))
     sm = MagicMock()
-    app.include_router(setup_memory_routes(mm, sm, memory_vector=None))
+    app.include_router(setup_memory_routes(mm, sm, memory_vector=memory_vector))
     return TestClient(app), mm
+
+
+class _RecordingIndex:
+    """Healthy index-provider stand-in that records add() kwargs."""
+    healthy = True
+
+    def __init__(self):
+        self.adds = []
+
+    def add(self, memory_id, text, *, owner=None, bulk=False, **meta):
+        self.adds.append({"id": memory_id, "owner": owner, "bulk": bulk})
 
 
 def _add(client, text, *, bulk=False, category="fact", source="test"):
@@ -105,3 +116,14 @@ def test_recommit_is_idempotent_zero_duplicates(tmp_path):
         assert r.status_code == 200
         assert r.json().get("message") == "Memory already exists"
     assert len(mm.load(owner="tester")) == 10, "re-commit must not duplicate"
+
+
+def test_route_forwards_owner_and_bulk_to_index_provider(tmp_path):
+    idx = _RecordingIndex()
+    client, _ = _make_client(tmp_path, memory_vector=idx)
+    assert _add(client, "a normal add").status_code == 200
+    assert _add(client, "a bulk add", bulk=True).status_code == 200
+    assert idx.adds == [
+        {"id": idx.adds[0]["id"], "owner": "tester", "bulk": False},
+        {"id": idx.adds[1]["id"], "owner": "tester", "bulk": True},
+    ]

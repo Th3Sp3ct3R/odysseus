@@ -96,17 +96,20 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         all_mem = memory_manager.load_all()
         all_mem.append(new_entry)
         memory_manager.save(all_mem)
-        # Sync vector index
+        # A deterministic bulk import (e.g. the Obsidian->memory sync) sets
+        # X-Odysseus-Bulk-Import. It drives two things: (1) skipping the
+        # per-entry index upsert when the provider's INDEX_ON_BULK is off, and
+        # (2) suppressing the "memory_added" event so a large import doesn't trip
+        # the "Memory Tidy" (consolidate_memory) task. memory.json is already
+        # saved above, so neither skip can lose data.
+        is_bulk = (request.headers.get("X-Odysseus-Bulk-Import") or "").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+        # Sync the index provider — best-effort; provider failures (e.g. Vanta
+        # down) are swallowed by FallbackProvider and never block this write.
         if memory_vector and memory_vector.healthy:
-            memory_vector.add(new_entry["id"], text)
-        # Bulk-import guard: callers doing a deterministic bulk import (e.g. the
-        # Obsidian->memory sync) set X-Odysseus-Bulk-Import to suppress the
-        # "memory_added" event. Without this, a large import fires the event
-        # repeatedly and trips the "Memory Tidy" (consolidate_memory) task,
-        # which LLM-collapses the freshly imported facts. Single/interactive
-        # adds omit the header and keep the normal tidy behavior.
-        bulk = (request.headers.get("X-Odysseus-Bulk-Import") or "").strip().lower()
-        if bulk not in ("1", "true", "yes", "on"):
+            memory_vector.add(new_entry["id"], text, owner=user, bulk=is_bulk)
+        if not is_bulk:
             try:
                 from src.event_bus import fire_event
                 fire_event("memory_added", user)
