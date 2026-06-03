@@ -3,6 +3,8 @@
     "@antithesishq/bombadil": "^0.3.2"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
+    "@anthropic-ai/sdk": "^0.98.0",
+    "express": "^5.2.1",
+    "puppeteer-core": "^25.1.0"
   }
 }
