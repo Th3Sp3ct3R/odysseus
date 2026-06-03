@@ -21,12 +21,13 @@ The current VantaBrain provider was designed as an **index** over Odysseus's
 | **A. Index-only (current)** | `memory_id` + vectors | `memory.json` (Odysseus) | Claude Code can't get real content — only ids that mean nothing to it. **Not sufficient for C.** |
 | **B. Shared content store (required for C)** | full text/facts/doc chunks + metadata + vectors | **VantaBrain itself** | VantaBrain becomes a real store both tools read; Odysseus `memory.json` becomes a *client/cache*, not the sole truth. |
 
-**Option C requires Model B.** This is the central architectural change: VantaBrain
-graduates from "Odysseus retrieval accelerator" to "shared content brain."
-
-Recommended stance: **VantaBrain is canonical for shared knowledge; each tool keeps
-a thin local cache** (Odysseus `memory.json`, Claude Code `~/.claude` memory files)
-that mirrors it. Writes go to VantaBrain; local caches are rebuildable.
+**The eventual shared brain wants Model B**, but **for the current phase canonicity
+is NOT flipped** — see §6 (Decisions locked for now). Until telemetry, backfill, MCP
+access, conflict handling, and rollback are all proven, **`memory.json` (and each
+tool's local memory) stays canonical**, and VantaBrain is treated as a **shared
+mirror / index layer** that augments retrieval without owning the truth. Model B is
+the *target*, reached only by a deliberate, separately-approved flip — not a default
+of this build.
 
 ---
 
@@ -113,18 +114,48 @@ Decision/keep-or-revert review after C5, before broad use.
 Self-hosted service + local embeddings ≈ **$0**. C's cost is **build + ops** (a
 long-running service to keep alive and back up), not dollars.
 
-## 6. Open decisions (need your call before C1)
-1. **Canonicity:** does VantaBrain become the source of truth (Model B), or do we
-   keep `memory.json`/`~/.claude` canonical and treat Vanta as a shared *mirror*?
-2. **Claude Code bridge:** live **MCP** (real-time, more work) vs **one-way sync**
-   into `~/.claude` memory (simpler, eventually-consistent) — or both.
-3. **Scope of "content":** facts only first, or facts + documents from the start.
-4. **Host:** loopback-only (single machine) vs Tailscale (reachable from other
-   devices/tools).
+## 6. Decisions locked for now (provisional — current build phase)
+
+These are **provisional locked decisions** for the current phase. They settle the
+direction so work can proceed safely; they can be revisited deliberately later, but
+until then they are the operating rules.
+
+1. **Source of truth.** Odysseus `memory.json` remains **canonical** for now.
+   VantaBrain is **not** canonical yet.
+2. **VantaBrain role.** Treat VantaBrain as a **shared mirror / index / store layer
+   first**. Do **not** flip canonicity until telemetry, backfill, MCP access,
+   conflict handling, and rollback are all proven.
+3. **Claude Code / Hermes bridge.** Start with a **read-only MCP** first. **No
+   writes** from Claude Code / Hermes into VantaBrain or Odysseus until read-only
+   retrieval is proven.
+4. **Content scope.** Start with **facts, skills, and searchable knowledge** first.
+   Full documents / content chunks come **later**, after the skill registry and MCP
+   bridge are stable.
+5. **Host.** Keep **loopback / local-first** for now. Tailscale / private network can
+   come later. **Never public.**
+6. **Vanta sync.** **No real Vanta backfill yet.** Telemetry must be added **before**
+   any real sync.
+7. **Hermes skills.** Do **not** ingest or mutate Hermes / Claude skills yet. First
+   step is a **read-only audit and design plan**.
+
+## 7. Remaining open questions (deferred until §6 items are proven)
+
+The big forks (canonicity, bridge direction, content scope, host) are settled above
+for this phase. What stays genuinely open — to revisit only after read-only
+retrieval + telemetry are proven:
+
+- **Telemetry shape:** what to measure before any sync (latency, hit rate, fallback
+  rate, error classes) and where it's recorded.
+- **MCP tool surface:** exact read-only tools (`vanta_search`, `vanta_get`, …),
+  owner scoping, and result shape.
+- **Conflict / dedup policy:** only relevant *if/when* canonicity is ever flipped
+  (decision §6.2) — not now.
+- **Embedding choice:** stay on local fastembed vs. an alternative — only when
+  content/doc scope (§6.4) is taken up.
 
 ---
 
-## 7. Relationship to Option B
+## 8. Relationship to Option B
 B is independent and immediate (chat on free models, separate brains). C is the
 later project that *unifies* the brains. Recommended order: **ship B, then build C
 incrementally (C1→C6).** B also de-risks C by making Odysseus your daily driver first.
