@@ -16,6 +16,10 @@ venv/
 
 # Data — all user data stays local
 data/
+# Generated skills metadata registry cache (read-only scanner output; never committed)
+data/skill_registry.json
+# Local skills exposure allowlist (operator-curated; never committed)
+data/skill_registry_allowlist.json
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/
