@@ -141,9 +141,31 @@ knowledge first, full content later).
   guardrails.
 - **No upstream; fork only.**
 
-## 7. Open questions (for when S1 starts)
-- Summary derivation: take the body's "Use this skill when" block, or the
-  description field, or both?
-- Include `~/.hermes/skills` (23) and plugin-sourced skills in v1, or `~/.claude`
-  only first?
-- Default risk policy: exclude `unknown` too, or only `offensive`?
+## 7. S1 decisions locked for now (provisional — current build phase)
+
+These settle the S1 open questions. Provisional locked rules for this phase; revisit
+deliberately later. All remain **read-only discovery** — no ingestion of bodies, no
+mutation, no execution.
+
+1. **Summary derivation.** Use the frontmatter **`description`** as the primary
+   summary. If `description` is missing, derive a **short deterministic** summary from
+   the `SKILL.md` headings + the first meaningful paragraph. **No LLM-generated
+   summaries in S1.**
+2. **Skill roots.** Include **`~/.claude/skills`** and **`~/.hermes/skills`** in v1.
+   **Exclude `~/.claude/plugins`** from v1 unless separately approved.
+3. **Risk filtering.** Build the registry as **metadata pointers only** — **do not
+   ingest full skill bodies** into Odysseus `memory.json`. **Do not expose
+   `unknown`-risk or `offensive` skills by default.** Default-exposed skills are only
+   `risk=safe`, `risk=none`, or explicitly allowlisted. Unknown/offensive skills may
+   be indexed as **disabled metadata** for audit visibility only.
+4. **Source of truth.** Hermes/Claude skill **files remain the source of truth**.
+   Odysseus stores only registry **metadata / cache pointers** in S1/S2. **No writes
+   back** to `~/.hermes` or `~/.claude`.
+5. **Execution.** **No skill scripts are executed.** This is **read-only discovery
+   only**.
+
+## 8. Remaining open questions (deferred until S2)
+- Exact deterministic-summary rule when `description` is absent (which heading levels,
+  paragraph length cap).
+- Allowlist mechanism + storage for surfacing specific `unknown`/`offensive` skills.
+- Re-index cadence / change detection for skill drift.
