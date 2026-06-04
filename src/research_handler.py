@@ -623,7 +623,7 @@ class ResearchHandler:
         await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
 
         try:
-            from src.deep_research import DeepResearcher
+            from src.deep_research_v2 import DeepResearcherV2 as DeepResearcher
 
             from src.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
@@ -653,6 +653,17 @@ class ResearchHandler:
             elapsed = time.time() - start_time
 
             stats = researcher.get_stats()
+            # Compatibility shim: v2 returns different stat keys than v1
+            if 'rounds_completed' in stats and 'Rounds' not in stats:
+                stats['Rounds'] = stats.get('rounds_completed', 0)
+                stats['Queries'] = stats.get('total_queries', 0)
+                stats['URLs'] = stats.get('total_urls', 0)
+                stats['Duration'] = f"{stats.get('elapsed_seconds', 0):.1f}s"
+                # Add v2-specific stats
+                stats['Claims'] = stats.get('total_claims', 0)
+                stats['High-Confidence Claims'] = stats.get('high_confidence', 0)
+                stats['Contradictions'] = stats.get('contradictions_detected', 0)
+                stats['Sub-questions'] = stats.get('sub_questions_answered', 0)
             logger.info("IterResearch completed successfully")
             for key, value in stats.items():
                 logger.info(f"  {key}: {value}")
