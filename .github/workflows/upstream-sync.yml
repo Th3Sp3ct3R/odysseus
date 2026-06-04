@@ -1,0 +1,138 @@
+name: Upstream Sync
+
+# Detects new upstream/dev commits and opens a PR into our fork's main.
+# It NEVER auto-merges, NEVER pushes to upstream, and uses only GITHUB_TOKEN.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 9 * * *"   # daily 09:00 UTC
+
+permissions:
+  contents: write          # push the sync branch in OUR fork
+  pull-requests: write     # open/update the PR
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/pewdiepie-archdaemon/odysseus.git
+  UPSTREAM_BRANCH: dev
+  FORK_BRANCH: main
+  SYNC_BRANCH: sync/upstream-dev
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream/dev
+        run: |
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch --prune --no-tags upstream "$UPSTREAM_BRANCH"
+
+      - name: Detect new upstream commits
+        id: detect
+        run: |
+          BASE=$(git merge-base origin/${FORK_BRANCH} upstream/${UPSTREAM_BRANCH})
+          HEAD=$(git rev-parse upstream/${UPSTREAM_BRANCH})
+          COUNT=$(git rev-list --count origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH})
+          echo "base=$BASE"   >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD"   >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Upstream is $COUNT commit(s) ahead of our main."
+
+      - name: Exit cleanly if up to date
+        if: steps.detect.outputs.count == '0'
+        run: echo "✓ No new upstream commits. Nothing to do."
+
+      - name: Build PR body + high-risk warnings
+        if: steps.detect.outputs.count != '0'
+        id: body
+        run: |
+          BASE="${{ steps.detect.outputs.base }}"
+          HEAD="${{ steps.detect.outputs.head }}"
+          {
+            echo "## Sync upstream \`dev\` into fork"
+            echo
+            echo "- upstream base SHA: \`$BASE\`"
+            echo "- upstream head SHA: \`$HEAD\`"
+            echo "- commits: **${{ steps.detect.outputs.count }}**"
+            echo
+            echo "### Changed file summary"
+            echo '```'
+            git diff --stat "$BASE" "$HEAD" | tail -50
+            echo '```'
+            echo
+            echo "### ⚠ High-risk areas touched"
+            HIT=0
+            while IFS='|' read -r label pat; do
+              FILES=$(git diff --name-only "$BASE" "$HEAD" | grep -E "$pat" || true)
+              if [ -n "$FILES" ]; then HIT=1; echo "- **$label**:"; echo "$FILES" | sed 's/^/  - /'; fi
+            done <<'AREAS'
+          memory|^src/memory|^data/memory
+          mcp_servers|^mcp_servers/
+          routes|^routes/
+          services|^services/
+          src|^src/
+          package files|^(package\.json|package-lock\.json|requirements.*\.txt|pyproject\.toml)$
+          app.py|^app\.py$
+          github workflows|^\.github/
+          AREAS
+          [ "$HIT" -eq 0 ] && echo "_None._"
+            echo
+            echo "### Before merging — verify Odysseus invariants"
+            echo "- [ ] tests pass"
+            echo "- [ ] no \`data/memory.json\` or generated caches committed"
+            echo "- [ ] Memory Tidy still paused; Vanta still disabled"
+            echo "- [ ] no secrets exposed; Tailscale/Funnel untouched"
+            echo
+            echo "> **Do not merge** until tests pass and custom Odysseus invariants are checked."
+          } > pr_body.md
+          echo "Wrote pr_body.md"
+
+      - name: Create/update sync branch (merge upstream into main)
+        if: steps.detect.outputs.count != '0'
+        id: branch
+        run: |
+          git switch -C "$SYNC_BRANCH" origin/${FORK_BRANCH}
+          if git merge --no-ff --no-edit upstream/${UPSTREAM_BRANCH}; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "✓ clean merge"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            echo "⚠ merge conflicts — staging markers for manual resolution in the PR"
+            git add -A
+            git commit -m "Merge upstream/${UPSTREAM_BRANCH} (CONFLICTS — resolve before merge)"
+          fi
+          git push --force-with-lease origin "$SYNC_BRANCH"
+
+      - name: Open or update PR (never auto-merge)
+        if: steps.detect.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CONFLICTS="${{ steps.branch.outputs.conflicts }}"
+          TITLE="Sync upstream dev into fork"
+          DRAFT=""
+          if [ "$CONFLICTS" = "true" ]; then TITLE="[CONFLICTS] $TITLE"; DRAFT="--draft"; fi
+          EXISTING=$(gh pr list --head "$SYNC_BRANCH" --base "$FORK_BRANCH" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "$TITLE" --body-file pr_body.md
+            echo "Updated PR #$EXISTING"
+          else
+            gh pr create --base "$FORK_BRANCH" --head "$SYNC_BRANCH" \
+              --title "$TITLE" --body-file pr_body.md $DRAFT
+            echo "Opened PR for $SYNC_BRANCH -> $FORK_BRANCH"
+          fi
+          echo "PR is NOT auto-merged by design."
