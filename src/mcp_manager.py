@@ -35,13 +35,20 @@ class McpManager:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio or SSE transport."""
+        """Connect to an MCP server via stdio, SSE, or streamable-http transport.
+
+        headers: optional HTTP headers (e.g. {"Authorization": "Bearer ..."}) for
+        the remote sse/http transports — ignored for stdio.
+        """
         try:
             if transport == "stdio":
                 return await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                return await self._connect_sse(server_id, name, url)
+                return await self._connect_sse(server_id, name, url, headers or None)
+            elif transport in ("http", "streamable-http", "streamable_http"):
+                return await self._connect_http(server_id, name, url, headers or None)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 return False
@@ -109,7 +116,7 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
+    async def _connect_sse(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
         """Connect to an MCP server via SSE transport."""
         try:
             from mcp import ClientSession
@@ -117,7 +124,9 @@ class McpManager:
             from contextlib import AsyncExitStack
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(sse_client(url))
+            transport = await stack.enter_async_context(
+                sse_client(url, headers=headers) if headers else sse_client(url)
+            )
             read_stream, write_stream = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
@@ -151,6 +160,52 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
+    async def _connect_http(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to an MCP server via streamable-http transport (the modern default
+        for remote/hosted servers). Supports auth headers."""
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamablehttp_client
+            from contextlib import AsyncExitStack
+
+            stack = AsyncExitStack()
+            transport = await stack.enter_async_context(
+                streamablehttp_client(url, headers=headers) if headers else streamablehttp_client(url)
+            )
+            # streamable-http yields a 3-tuple (read, write, get_session_id) vs SSE's 2-tuple.
+            read_stream, write_stream = transport[0], transport[1]
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+
+            await session.initialize()
+
+            # Discover tools
+            tools_result = await session.list_tools()
+            tools = []
+            for tool in tools_result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                })
+
+            self._sessions[server_id] = session
+            self._stacks[server_id] = stack
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected",
+                "name": name,
+                "transport": "http",
+                "tool_count": len(tools),
+            }
+
+            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via streamable-http")
+            return True
+
+        except ImportError:
+            logger.warning("MCP package missing streamable-http client. Upgrade with: pip install -U mcp")
+            self._connections[server_id] = {"status": "error", "error": "mcp streamable-http unavailable", "name": name}
+            return False
+
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
         stack = self._stacks.pop(server_id, None)
@@ -181,6 +236,7 @@ class McpManager:
             for srv in servers:
                 args = json.loads(srv.args) if srv.args else []
                 env = json.loads(srv.env) if srv.env else {}
+                headers = json.loads(srv.headers) if getattr(srv, "headers", None) else None
                 await self.connect_server(
                     server_id=srv.id,
                     name=srv.name,
@@ -189,9 +245,36 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 )
         finally:
             db.close()
+
+    async def _reconnect_from_db(self, server_id: str) -> bool:
+        """Tear down and reconnect any (non-builtin) server from its stored DB config."""
+        from src.database import McpServer, SessionLocal
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv:
+                return False
+            args = json.loads(srv.args) if srv.args else []
+            env = json.loads(srv.env) if srv.env else {}
+            headers = json.loads(srv.headers) if getattr(srv, "headers", None) else None
+            name, transport, command, url = srv.name, srv.transport, srv.command, srv.url
+        finally:
+            db.close()
+
+        await self.disconnect_server(server_id)
+        try:
+            return await self.connect_server(
+                server_id=server_id, name=name, transport=transport,
+                command=command, args=args, env=env, url=url, headers=headers,
+            )
+        except Exception as e:
+            logger.error(f"Failed to reconnect MCP server {server_id} from DB: {e}")
+            return False
 
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
@@ -212,26 +295,27 @@ class McpManager:
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
-            # Auto-reconnect for builtin servers whose subprocess may have died
-            if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
-                reconnected = await self._reconnect_builtin(server_id)
-                if reconnected:
-                    session = self._sessions.get(server_id)
-                    if session:
-                        try:
-                            result = await self._do_call(session, tool_name, arguments)
-                        except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
-                    else:
-                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+            # Auto-reconnect on call failure: builtins rebuild from their script
+            # spec, everything else rebuilds from its stored DB config.
+            logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+            reconnected = (
+                await self._reconnect_builtin(server_id)
+                if self.is_builtin(server_id)
+                else await self._reconnect_from_db(server_id)
+            )
+            if reconnected:
+                session = self._sessions.get(server_id)
+                if session:
+                    try:
+                        result = await self._do_call(session, tool_name, arguments)
+                    except Exception as e2:
+                        logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                        return {"error": str(e2), "exit_code": 1}
                 else:
-                    logger.error(f"MCP reconnect failed for {server_id}")
-                    return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
+                    return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                logger.error(f"MCP reconnect failed for {server_id}")
+                return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
 
         return result
 

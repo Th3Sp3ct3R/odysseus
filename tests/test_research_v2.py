@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -14,14 +16,19 @@ from src.deep_research_v2 import DeepResearcherV2
 
 
 async def test_sandalphon_research():
-    """Test research with SandalPhon prompt."""
+    """Test research with SandalPhon prompt.
 
-    # Get OpenRouter API key from environment
+    Live integration test — hits OpenRouter over the network. Opt-in only so it
+    never red-flags the default unit suite: set RUN_RESEARCH_INTEGRATION=1 and a
+    valid OPENROUTER_API_KEY to run it.
+    """
+
     api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        print("ERROR: OPENROUTER_API_KEY environment variable not set")
-        print("Run with: OPENROUTER_API_KEY=your_key python tests/test_research_v2.py")
-        sys.exit(1)
+    if not os.environ.get("RUN_RESEARCH_INTEGRATION") or not api_key:
+        pytest.skip(
+            "live OpenRouter integration test; set RUN_RESEARCH_INTEGRATION=1 "
+            "and OPENROUTER_API_KEY to run"
+        )
 
     # Initialize researcher with OpenRouter
     researcher = DeepResearcherV2(

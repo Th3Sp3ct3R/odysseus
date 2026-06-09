@@ -1,0 +1,43 @@
+{
+  "mcpServers": {
+    "hermes": {
+      "transport": "stdio",
+      "command": "hermes",
+      "args": ["mcp", "serve"],
+      "env": {
+        "HERMES_HOME": "/Users/growthgod/.hermes"
+      },
+      "enabled": true,
+      "description": "Hermes messaging MCP — conversations, messages, events, approvals."
+    },
+    "macos-desktop-control": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/Users/growthgod/macos-desktop-control/src/index.js"],
+      "env": {},
+      "enabled": false,
+      "description": "macOS desktop control MCP; desktop control only."
+    },
+    "crw-mcp": {
+      "transport": "stdio",
+      "command": "/Users/growthgod/.cargo/bin/crw-mcp",
+      "args": [],
+      "env": {},
+      "enabled": false,
+      "description": "CRW MCP server."
+    },
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/growthgod/Desktop/VAN/odysseus",
+        "/Users/growthgod/.hermes/skills/creative"
+      ],
+      "env": {},
+      "enabled": true,
+      "description": "Scoped filesystem access to the Odysseus repo and Hermes creative skills."
+    }
+  }
+}

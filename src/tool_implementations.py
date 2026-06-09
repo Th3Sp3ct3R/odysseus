@@ -1102,17 +1102,27 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         import uuid as _uuid
         from datetime import datetime
         name = args.get("name", "")
+        transport = args.get("transport", "stdio")
         command = args.get("command", "")
         cmd_args = args.get("args", [])
         env = args.get("env", {})
-        if not name or not command:
-            return {"error": "name and command are required", "exit_code": 1}
+        url = args.get("url", "")
+        headers = args.get("headers", {})
+        remote_transports = ("sse", "http", "streamable-http", "streamable_http")
+        if not name:
+            return {"error": "name is required", "exit_code": 1}
+        if transport == "stdio" and not command:
+            return {"error": "command is required for stdio transport", "exit_code": 1}
+        if transport in remote_transports and not url:
+            return {"error": f"url is required for {transport} transport", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
         db = SessionLocal()
         try:
-            srv = McpServer(id=sid, name=name, transport="stdio", command=command,
+            srv = McpServer(id=sid, name=name, transport=transport, command=command or None,
                             args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
                             env=json.dumps(env) if isinstance(env, dict) else env,
+                            url=url or None,
+                            headers=json.dumps(headers) if isinstance(headers, dict) and headers else None,
                             is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(srv)
             db.commit()
@@ -1124,9 +1134,11 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         if mcp:
             try:
                 await mcp.connect_server(
-                    sid, name, "stdio", command=command,
+                    sid, name, transport, command=command or None,
                     args=cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args),
                     env=env if isinstance(env, dict) else json.loads(env),
+                    url=url or None,
+                    headers=(headers if isinstance(headers, dict) else json.loads(headers)) or None,
                 )
                 st = mcp.get_server_status(sid)
                 tool_count = st.get("tool_count", 0)
@@ -1161,18 +1173,21 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         if not mcp:
             return {"error": "MCP manager not available", "exit_code": 1}
         try:
-            await mcp.disconnect_server(sid)
             from core.database import SessionLocal, McpServer
             db2 = SessionLocal()
             try:
                 srv = db2.query(McpServer).filter(McpServer.id == sid).first()
-                if srv:
-                    await mcp.connect_server(sid)
-                    st = mcp.get_server_status(sid)
-                    return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
-                return {"error": f"Server {sid} not found", "exit_code": 1}
+                if not srv:
+                    return {"error": f"Server {sid} not found", "exit_code": 1}
+                name = srv.name
             finally:
                 db2.close()
+            # Rebuild the connection from the stored DB config (command/args/env/url/headers).
+            ok = await mcp._reconnect_from_db(sid)
+            if not ok:
+                return {"error": f"Reconnect failed for '{name}'", "exit_code": 1}
+            st = mcp.get_server_status(sid)
+            return {"response": f"Reconnected '{name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
         except Exception as e:
             return {"error": str(e), "exit_code": 1}
 

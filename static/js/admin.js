@@ -1234,9 +1234,57 @@ async function loadBuiltinTools() {
   }
 }
 
+async function loadMcpRegistry() {
+  // Config-backed MCP servers (read/status only; never started by this panel).
+  const list = el('adm-mcpList');
+  if (!list) return;
+  let box = el('adm-mcpRegistry');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'adm-mcpRegistry';
+    box.style.cssText = 'margin:6px 0 14px;';
+    list.parentNode.insertBefore(box, list);
+  }
+  let view;
+  try {
+    const res = await fetch('/api/mcp/registry', { credentials: 'same-origin' });
+    view = await res.json();
+  } catch (e) { box.innerHTML = '<div class="admin-empty">MCP registry unavailable</div>'; return; }
+  if (view && view.error) {
+    box.innerHTML = `<div class="admin-empty">MCP config error: ${esc(view.error)}</div>`;
+    return;
+  }
+  const colors = { configured: 'var(--fg)', disabled: 'color-mix(in srgb, var(--fg) 50%, transparent)', missing_command: 'var(--red)', invalid: 'var(--red)' };
+  const rows = (view.servers || []).map(s => {
+    const c = colors[s.status] || 'var(--fg)';
+    const warn = (s.warnings || []).map(w => `<div style="color:#e5a33a;font-size:11px;">⚠ ${esc(w)}</div>`).join('');
+    return `<div class="admin-user-row"><div class="admin-user-info" style="flex-wrap:wrap;gap:.3rem;">
+      <span class="admin-user-name">${esc(s.name)}</span>
+      <span class="admin-badge" style="background:${c}33;color:${c}">${esc(s.status)}</span>
+      <span class="admin-badge" style="opacity:.55">${esc(s.transport)}</span>
+      <span class="admin-badge" style="opacity:.5">source: ${esc(s.source)}</span>
+      <span class="admin-badge" style="opacity:.5">${s.enabled ? 'enabled' : 'disabled'}</span>
+      ${s.description ? `<span style="font-size:11px;opacity:.6;flex-basis:100%;">${esc(s.description)}</span>` : ''}
+      ${warn}
+    </div></div>`;
+  }).join('');
+  box.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <strong style="font-size:12px;">Config-backed MCP servers <span style="opacity:.5;">(${esc(view.source_kind || 'config')})</span></strong>
+      <button class="admin-btn-sm" id="adm-mcpReload">Reload MCP Config</button>
+    </div>${rows || '<div class="admin-empty">No config-backed servers</div>'}
+    <div style="font-size:11px;opacity:.5;margin-top:4px;">Hermes media execution MCP — not wired yet.</div>`;
+  const rb = el('adm-mcpReload');
+  if (rb) rb.addEventListener('click', async () => {
+    rb.disabled = true; rb.textContent = 'Reloading…';
+    try { await fetch('/api/mcp/registry/reload', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
+    loadMcpRegistry();
+  });
+}
+
 async function loadMcpServers() {
   const list = el('adm-mcpList');
   if (!list) return;  // MCP section not visible / not yet rendered
+  loadMcpRegistry();  // render config-backed registry panel above the manual list
   try {
     const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
     const servers = await res.json();

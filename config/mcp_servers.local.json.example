@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy this to config/mcp_servers.local.json and edit for THIS machine. mcp_servers.local.json is gitignored. Put NO secrets here — use env var NAMES in 'env' and set the real values in the host environment. Keep filesystem scopes narrow (a project dir), never the home root.",
+  "mcpServers": {
+    "hermes": {
+      "transport": "stdio",
+      "command": "hermes",
+      "args": ["mcp", "serve"],
+      "env": {
+        "HERMES_HOME": "/Users/growthgod/.hermes"
+      },
+      "enabled": true,
+      "description": "Hermes messaging MCP — conversations, messages, events, approvals."
+    },
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/growthgod/Desktop/VAN/odysseus",
+        "/Users/growthgod/.hermes/skills/creative"
+      ],
+      "env": {},
+      "enabled": true,
+      "description": "Scoped filesystem access to the Odysseus repo and Hermes creative skills."
+    }
+  }
+}

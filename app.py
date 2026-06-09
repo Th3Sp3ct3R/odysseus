@@ -572,6 +572,9 @@ from routes.mcp_routes import setup_mcp_routes
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
+# Config-backed MCP registry (read/status only; never starts servers).
+from routes.mcp_registry_routes import setup_mcp_registry_routes
+app.include_router(setup_mcp_registry_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

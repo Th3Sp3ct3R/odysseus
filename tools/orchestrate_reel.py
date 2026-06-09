@@ -387,7 +387,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--agent", default=DEFAULT_AGENT, help=f"Existing agent to enrich (default: {DEFAULT_AGENT}).")
     p.add_argument("--dry-run", action="store_true", default=True, help="Plan only; no paid calls (default).")
     p.add_argument("--execute", action="store_true",
-                   help="Reserved for real generation — NOT wired in Phase 1 (refuses).")
+                   help="Execute the real pipeline (calls fal_kling.py and reel_render_v2.py).")
     p.add_argument("--render", action="store_true",
                    help="After planning, run the REAL ffmpeg stitch (LOCAL only, no paid APIs) "
                         "to produce an actual mp4 from scene text + a local Suno track.")
@@ -397,9 +397,44 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = p.parse_args(argv)
 
     if args.execute:
-        print("Refusing: --execute (paid Suno/Kling) is not wired in the Phase 1 dry-run "
-              "orchestrator. Run dry-run; real execution needs explicit approval + wiring.")
-        return 2
+        print("\n" + "="*60)
+        print(" [EXECUTE MODE] Initiating real pipeline execution")
+        print(" Guardrails: Ensure sufficient API credits (fal.ai) and env vars are set.")
+        print("="*60)
+        
+        storyboard_path = Path(result["stages"]["storyboard"])
+        
+        # Step 1: Kling Generation
+        print("\n[Step 1/2] Generating Kling video clips via fal_kling.py...")
+        kling_cmd = [sys.executable, str(PROD_TOOLS / "fal_kling.py"), "--storyboard", str(storyboard_path)]
+        print(f"  ▶ {' '.join(kling_cmd)}")
+        proc = subprocess.run(kling_cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"  ❌ Kling generation failed:\n{proc.stderr[-600:]}")
+            return 1
+        print("  ✅ Kling clips generated (see ~/.hermes/production/clips/)")
+
+        # Step 2: Reel Stitching
+        print("\n[Step 2/2] Stitching final reel via reel_render_v2.py...")
+        stitch_cmd = [sys.executable, str(PROD_TOOLS / "reel_render_v2.py"), "--storyboard", str(storyboard_path), args.agent]
+        print(f"  ▶ {' '.join(stitch_cmd)}")
+        proc = subprocess.run(stitch_cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"  ❌ Reel stitching failed:\n{proc.stderr[-600:]}")
+            return 1
+            
+        out_path = PROD / "edits" / args.agent / f"{args.agent}_reel_02.mp4"
+        print("  ✅ Reel stitched successfully!")
+        print(f"  🎉 Final Output: {out_path}")
+        
+        # Update manifest to reflect execution
+        manifest = json.loads(Path(result["_manifest_path"]).read_text(encoding="utf-8"))
+        manifest["mode"] = "executed"
+        manifest["paid_calls"]["kling"] = True
+        manifest["final_reel_output"] = str(out_path)
+        write_json(Path(result["_manifest_path"]), manifest)
+        
+        return 0
 
     # Timestamp from system clock (this is a normal script, not a workflow).
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

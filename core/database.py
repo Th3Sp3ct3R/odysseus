@@ -341,7 +341,8 @@ class McpServer(TimestampMixin, Base):
     command = Column(String, nullable=True)      # For stdio: executable path
     args = Column(Text, nullable=True)           # JSON array of command args
     env = Column(Text, nullable=True)            # JSON object of env vars
-    url = Column(String, nullable=True)          # For SSE: server URL
+    url = Column(String, nullable=True)          # For SSE/HTTP: server URL
+    headers = Column(Text, nullable=True)        # JSON object of HTTP headers (sse/http transports), e.g. auth tokens
     is_enabled = Column(Boolean, default=True)
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
@@ -1240,6 +1241,18 @@ def _migrate_add_disabled_tools():
     except Exception as e:
         logging.getLogger(__name__).warning(f"disabled_tools migration: {e}")
 
+def _migrate_add_mcp_headers_column():
+    """Add headers column to mcp_servers table if missing (sse/http auth headers)."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if cols and "headers" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN headers TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added headers column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"mcp headers migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -1512,6 +1525,7 @@ def init_db():
     _migrate_add_oauth_config()
     _migrate_add_task_automation_columns()
     _migrate_add_disabled_tools()
+    _migrate_add_mcp_headers_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()

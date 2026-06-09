@@ -1,0 +1,5 @@
+# fal_video_proxy — self-contained deps (already present in the Odysseus venv)
+fastapi
+uvicorn
+httpx
+pydantic

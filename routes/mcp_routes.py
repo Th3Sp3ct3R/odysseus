@@ -57,13 +57,20 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     needs_oauth = token_file and not os.path.exists(token_file)
                 disabled_list = json.loads(srv.disabled_tools) if srv.disabled_tools else []
                 total_tools = status.get("tool_count", 0)
+                # Mask secret values: env vars and HTTP headers often hold tokens
+                # (e.g. GeeLark API key, Authorization bearers). Expose only the
+                # KEYS so the UI can show what's configured without leaking secrets
+                # over an exposed/multi-user deployment.
+                env_obj = json.loads(srv.env) if srv.env else {}
+                headers_obj = json.loads(srv.headers) if getattr(srv, "headers", None) else {}
                 result.append({
                     "id": srv.id,
                     "name": srv.name,
                     "transport": srv.transport,
                     "command": srv.command,
                     "args": json.loads(srv.args) if srv.args else [],
-                    "env": json.loads(srv.env) if srv.env else {},
+                    "env": {k: "***" for k in env_obj},
+                    "header_keys": list(headers_obj.keys()),
                     "url": srv.url,
                     "is_enabled": srv.is_enabled,
                     "status": status.get("status", "disconnected"),
@@ -87,6 +94,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         args: str = Form("[]"),
         env: str = Form("{}"),
         url: str = Form(None),
+        headers: str = Form("{}"),
         oauth_file: str = Form(None),
         oauth_config: str = Form(None),
     ):
@@ -97,10 +105,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
         server_id = str(uuid.uuid4())[:8]
 
         # Validate
+        remote_transports = ("sse", "http", "streamable-http", "streamable_http")
         if transport == "stdio" and not command:
             raise HTTPException(400, "command is required for stdio transport")
-        if transport == "sse" and not url:
-            raise HTTPException(400, "url is required for SSE transport")
+        if transport in remote_transports and not url:
+            raise HTTPException(400, f"url is required for {transport} transport")
 
         # Parse JSON fields
         try:
@@ -111,6 +120,10 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = json.loads(env) if env else {}
         except json.JSONDecodeError:
             parsed_env = {}
+        try:
+            parsed_headers = json.loads(headers) if headers else {}
+        except json.JSONDecodeError:
+            parsed_headers = {}
 
         # Parse OAuth config
         parsed_oauth_config = None
@@ -160,6 +173,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=json.dumps(parsed_args),
                 env=json.dumps(parsed_env),
                 url=url,
+                headers=json.dumps(parsed_headers) if parsed_headers else None,
                 is_enabled=True,
                 oauth_config=json.dumps(parsed_oauth_config) if parsed_oauth_config else None,
             )
@@ -185,6 +199,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                headers=parsed_headers or None,
             )
 
         status = mcp_manager.get_server_status(server_id)
@@ -249,6 +264,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if enabled:
                 args = json.loads(srv.args) if srv.args else []
                 env = json.loads(srv.env) if srv.env else {}
+                headers = json.loads(srv.headers) if getattr(srv, "headers", None) else None
                 await mcp_manager.connect_server(
                     server_id=server_id,
                     name=srv.name,
@@ -257,6 +273,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 )
             else:
                 await mcp_manager.disconnect_server(server_id)
