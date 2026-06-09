@@ -740,6 +740,45 @@ async def startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Periodic safety sweep: full re-mirror of memory.json -> VANTA-Brain bus.
+    # The real-time path (MemoryManager.save -> bus_export.mirror_async) covers
+    # normal writes; this catches any drift if a mirror thread ever failed.
+    async def _bus_safety_sweep():
+        import os as _os
+        interval = int(_os.environ.get("BUS_SWEEP_INTERVAL_S", "900"))  # 15 min default
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                from src.bus_export import mirror_all
+                await asyncio.to_thread(mirror_all)
+            except asyncio.CancelledError:
+                break
+            except Exception as _e:
+                logger.debug("Bus safety sweep skipped: %s", _e)
+    try:
+        _startup_tasks.append(asyncio.create_task(_bus_safety_sweep()))
+    except Exception as _e:
+        logger.warning("Failed to start bus safety sweep: %s", _e)
+    # Task-handoff ingest: pull Hermes's results from tasks/done/ back into
+    # memory (which re-mirrors), and clear completed tasks from active/.
+    async def _bus_ingest_loop():
+        import os as _os
+        interval = int(_os.environ.get("BUS_INGEST_INTERVAL_S", "60"))  # 1 min default
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                from src.bus_tasks import ingest_results
+                res = await asyncio.to_thread(ingest_results)
+                if res.get("ingested"):
+                    logger.info("Bus ingest: %s", res)
+            except asyncio.CancelledError:
+                break
+            except Exception as _e:
+                logger.debug("Bus ingest skipped: %s", _e)
+    try:
+        _startup_tasks.append(asyncio.create_task(_bus_ingest_loop()))
+    except Exception as _e:
+        logger.warning("Failed to start bus ingest loop: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():

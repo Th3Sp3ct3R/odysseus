@@ -189,6 +189,14 @@ class MemoryManager:
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, self.memory_file)
+
+        # Real-time mirror to the VANTA-Brain bus so Hermes can pull it.
+        # Fire-and-forget on a daemon thread; never blocks or raises here.
+        try:
+            from src.bus_export import mirror_async
+            mirror_async(entries)
+        except Exception:
+            pass
     
     def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
         """Add a new memory entry."""

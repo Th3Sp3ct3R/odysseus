@@ -94,6 +94,46 @@ If you add real metrics/tracing, document it here.
 - Node deps (`package.json`) exist for tooling only (`@anthropic-ai/sdk`,
   `puppeteer-core`, Antithesis `bombadil`); the app itself is Python.
 
+## Memory semantic search (Chroma) & the Hermes bus
+
+Memory vector search uses a **Chroma server** via `src/chroma_client.py`
+(`HttpClient`, default `localhost:8100`, overridable with `CHROMADB_HOST/PORT`),
+collection `odysseus_memories`, embeddings via local FastEmbed.
+**If Chroma is down, search degrades to keyword matching** (`MemoryVectorStore`
+fails open; `mcp_servers/memory_readonly_server.py` is semantic-first → keyword
+fallback) — always functional, just not semantic. Semantic search is an
+**optional accelerator**; the bus + task handoff work without it. The `.venv`
+chromadb is **client-only** (no `chromadb_rust_bindings`), so the server runs via
+Docker — the `chromadb` service in `docker-compose.yml` (persistent volume
+`chromadb-data`, `--restart unless-stopped`).
+
+```bash
+# start just the Chroma service (localhost:8100, persistent):
+docker compose up -d chromadb
+# health check:
+curl -s localhost:8100/api/v2/heartbeat
+# (re)build the vector index from memory.json (after start, or to resync):
+.venv/bin/python scripts/reindex_memory_vectors.py
+# then reconnect Odysseus:
+launchctl kickstart -k gui/$(id -u)/com.growthgod.odysseus
+# stop / rebuild the container:
+docker compose stop chromadb
+docker compose up -d --force-recreate chromadb
+```
+Real-time memory adds auto-index (`MemoryVectorStore.add` via `MemoryManager`);
+`reindex_memory_vectors.py` is only for full backfill/resync. NOTE: the compose
+stack also defines an `odysseus` app container — keep it **stopped**
+(`docker update --restart=no odysseus-odysseus-1`); the live app runs from the
+working tree via launchd so the bus can write the host vault natively.
+
+**Odysseus ⇄ Hermes bus** (orchestrator → executor): `src/bus_export.py` mirrors
+`data/memory.json` → `~/Documents/VANTA-Brain/odysseus/memory/` in real time
+(hooked in `MemoryManager.save`); `src/bus_tasks.py` (`emit_task`/`ingest_results`,
+also the `bus_task` MCP tool in `mcp_servers/bus_task_server.py`) drives the
+`tasks/{inbox,active,done}/` handoff. `mcp_servers/memory_readonly_server.py` is
+Hermes's read-only live lane. Periodic ingest + safety-sweep run in `app.py`
+startup. Odysseus runs durably via launchd `com.growthgod.odysseus` (port 7001).
+
 ## Docs
 
 Root: `README.md` (full overview + quickstart), `ROADMAP.md`, `CONTRIBUTING.md`,

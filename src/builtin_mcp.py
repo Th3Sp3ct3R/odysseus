@@ -50,14 +50,32 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "bus_task":   ("mcp_servers/bus_task_server.py",   "Built-in: Bus Task (hand work to Hermes)"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
+#
+# Firecrawl gives the agent hosted web scrape/search PLUS a remote browser
+# sandbox that can log into gated sites: open a session with a named
+# `profile` (saveChanges=true), authenticate once, close it, then reuse that
+# profile name on later scrape/interact calls to stay logged in. See the
+# "firecrawl-login" skill for the canonical flow.
+#
+# `env_keys` lists environment variables to forward into the npx subprocess.
+# The values are read from the live environment (loaded from .env / launchd)
+# at registration time, so secrets never live in this git-tracked file. A
+# server whose required env is missing is skipped (fail-open, no crash).
 _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
         "command": "npx",
         "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
+    },
+    "firecrawl": {
+        "name": "Built-in: Firecrawl (web scrape / search / browser-login)",
+        "command": "npx",
+        "args": ["-y", "firecrawl-mcp"],
+        "env_keys": ["FIRECRAWL_API_KEY"],
     },
 }
 
@@ -109,6 +127,17 @@ async def register_builtin_servers(mcp_manager):
         await asyncio.sleep(3)  # let Python servers finish first
         for server_id, cfg in _BUILTIN_NPX_SERVERS.items():
             try:
+                # Forward required secrets from the live env (loaded from .env).
+                # If any are missing, skip this server rather than launch it
+                # mis-configured (e.g. firecrawl-mcp with no API key).
+                env_keys = cfg.get("env_keys", [])
+                npx_env = {k: os.environ[k] for k in env_keys if os.environ.get(k)}
+                missing = [k for k in env_keys if not os.environ.get(k)]
+                if missing:
+                    logger.warning(
+                        f"NPX server '{cfg['name']}' skipped — missing env: {missing}"
+                    )
+                    continue
                 logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(cfg['args'])})")
                 ok = await asyncio.wait_for(
                     mcp_manager.connect_server(
@@ -117,6 +146,7 @@ async def register_builtin_servers(mcp_manager):
                         transport="stdio",
                         command=npx_path,
                         args=cfg["args"],
+                        env=npx_env or None,
                     ),
                     timeout=30,
                 )

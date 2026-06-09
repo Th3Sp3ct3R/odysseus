@@ -318,6 +318,40 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     return None
 
 
+# LongCat-style tool calls (Meituan LongCat / openrouter "owl-alpha"):
+#   <longcat_tool_call>read_file
+#   <longcat_arg_key>path</longcat_arg_key>
+#   <longcat_arg_value>/path/to/file</longcat_arg_value>
+#   </longcat_tool_call>
+_LONGCAT_ARG_RE = re.compile(
+    r"<longcat_arg_key>(.*?)</longcat_arg_key>\s*<longcat_arg_value>(.*?)</longcat_arg_value>",
+    re.S,
+)
+_LONGCAT_CALL_RE = re.compile(
+    r"<longcat_tool_call>\s*([A-Za-z0-9_\-]+)(.*?)(?=</longcat_tool_call>|<longcat_tool_call>|$)",
+    re.S,
+)
+
+
+def _parse_longcat_calls(text: str) -> List[ToolBlock]:
+    """Parse LongCat-style ``<longcat_tool_call>`` blocks into ToolBlocks.
+
+    Tolerates a missing closing tag (some emissions drop it): each call is read
+    from its opening tag + tool name until the next call's tag, a closing tag,
+    or end-of-string. Arg key/value pairs become the tool's JSON arguments,
+    shaped by the same ``function_call_to_tool_block`` the native path uses.
+    """
+    from src.tool_schemas import function_call_to_tool_block
+    blocks: List[ToolBlock] = []
+    for m in _LONGCAT_CALL_RE.finditer(text):
+        tool_name = m.group(1).strip()
+        args = {k.strip(): v.strip() for k, v in _LONGCAT_ARG_RE.findall(m.group(2))}
+        block = function_call_to_tool_block(tool_name, json.dumps(args))
+        if block:
+            blocks.append(block)
+    return blocks
+
+
 def parse_tool_blocks(text: str) -> List[ToolBlock]:
     """Extract executable tool blocks from LLM response text.
 
@@ -327,6 +361,7 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
     3. XML-style <tool_call>/<invoke> blocks
     4. <tool_code> blocks (MiniMax-M2.5 style)
     5. DeepSeek DSML markup (normalized to <invoke> first)
+    6. <longcat_tool_call> blocks (LongCat / owl-alpha style)
     """
     blocks = []
 
@@ -382,6 +417,10 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 6: <longcat_tool_call> blocks (LongCat / owl-alpha style)
+    if not blocks and '<longcat_tool_call>' in text:
+        blocks.extend(_parse_longcat_calls(text))
+
     return blocks
 
 
@@ -396,5 +435,8 @@ def strip_tool_blocks(text: str) -> str:
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    # Strip LongCat tool-call blocks (with or without a closing tag) + stray tags
+    cleaned = re.sub(r'<longcat_tool_call>.*?(?:</longcat_tool_call>|$)', '', cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r'</?longcat_(?:tool_call|arg_key|arg_value)>', '', cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()

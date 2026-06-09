@@ -201,9 +201,19 @@ async def maybe_extract_skill(
         logger.debug("[skill-extract] non-JSON LLM response, dropping: %s", e)
         return None
     except Exception as e:
-        # Real exceptions stay INFO+warning so they don't get lost when
-        # users only have default log level. `exc_info=True` ships the
-        # full traceback so timeouts vs auth vs import errors are
-        # distinguishable from outside.
-        logger.warning("[skill-extract] FAILED: %s", e, exc_info=True)
+        # Skill extraction is a best-effort background nicety. A failing/unreachable
+        # extraction endpoint (e.g. an HTTP 4xx/5xx from a misconfigured LLM endpoint)
+        # is operational, not a bug — log it concisely and fail open without spewing a
+        # traceback on every agent run. Genuine code errors keep the full traceback.
+        from fastapi import HTTPException
+        try:
+            import httpx as _httpx
+            _net_errs = (HTTPException, _httpx.HTTPError, _httpx.TransportError)
+        except Exception:
+            _net_errs = (HTTPException,)
+        if isinstance(e, _net_errs):
+            logger.warning("[skill-extract] skipped (extraction endpoint unavailable): %s", e)
+            logger.debug("[skill-extract] failure detail", exc_info=True)
+        else:
+            logger.warning("[skill-extract] FAILED: %s", e, exc_info=True)
         return None
