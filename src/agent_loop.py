@@ -1314,6 +1314,20 @@ async def stream_agent_loop(
                 _relevant_tools.update(tools)
         # Always include core document/memory tools
         _relevant_tools.update({"create_document", "manage_memory", "manage_notes"})
+        # MCP tools are only indexed in the (vector) ToolIndex, so this
+        # keyword fallback — which fires when Chroma/ToolIndex is down — can't
+        # know their names. Without seeding them here, the API-model schema
+        # filter below drops EVERY MCP tool (firecrawl, browser, …) whenever
+        # Chroma is offline, silently stripping the agent of capabilities the
+        # user explicitly installed. Seed them so they survive the filter.
+        if mcp_mgr:
+            try:
+                for _msch in mcp_mgr.get_all_openai_schemas(_mcp_disabled_map or {}):
+                    _mname = _msch.get("function", {}).get("name")
+                    if _mname:
+                        _relevant_tools.add(_mname)
+            except Exception as _mexc:
+                logger.debug("[tool-rag] MCP fallback seed failed: %s", _mexc)
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
     # If a document is open the model needs the editing tools available
@@ -1464,17 +1478,20 @@ async def stream_agent_loop(
             # write the answer instead of flailing further.
             all_tool_schemas = []
         elif _is_api_model:
-            # Filter schemas by RAG-selected tools (if available)
+            # Filter NATIVE schemas by RAG-selected tools (if available), but
+            # NEVER filter MCP tools that way. MCP tools are a small, explicitly
+            # user-installed set, and the selector can't reliably surface them:
+            # the vector ToolIndex may be cold / time out indexing them (1.5s
+            # cap), or Chroma may be down entirely. Filtering MCP by the RAG set
+            # silently strips installed servers (firecrawl, browser, geelark) —
+            # which is exactly the "my MCP tool isn't working" failure. A few
+            # extra schemas is the right tradeoff for reliable availability.
             if _relevant_tools:
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                all_tool_schemas = base_schemas + mcp_schemas
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
